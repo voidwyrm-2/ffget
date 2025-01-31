@@ -16,7 +16,7 @@ func main() {
 	version = strings.TrimSpace(version)
 	parser := argparse.NewParser("ffget", "An AO3 client written in Go")
 
-	version := parser.Flag("v", "version", &argparse.Options{Required: false, Default: false, Help: "Shows the current FFGet version"})
+	showVersion := parser.Flag("v", "version", &argparse.Options{Required: false, Default: false, Help: "Shows the current FFGet version"})
 	url := parser.String("u", "url", &argparse.Options{Required: true, Help: "The URL to the fanfiction"})
 	info := parser.Flag("i", "info", &argparse.Options{Required: false, Default: false, Help: "Gets the title, description, etc from the fanfiction"})
 	download := parser.Selector("d", "download", []string{"azw3", "epub", "mobi", "pdf", "html"}, &argparse.Options{Required: false, Default: "none", Help: "Download the specified format of the fanfiction"})
@@ -28,12 +28,14 @@ func main() {
 		return
 	}
 
-	if *version {
+	if *showVersion {
 		fmt.Println(version)
 		return
 	}
 
-	html, err := getFFRaw(url)
+	*url = cleanFFLink(*url)
+
+	html, err := getHTML(*url)
 	if err != nil {
 		fmt.Println(err.Error())
 		return
@@ -45,11 +47,29 @@ func main() {
 	}
 
 	if *info {
-		if ffinfo.titleRaw != nil {
-			fmt.Printf("raw title: %s\ndescription:\n%s\n", *ffinfo.titleRaw, ffinfo.description)
-		} else {
-			fmt.Printf("name: %s\nauthor: %s\nfandom: %s\ndescription:\n%s\n", ffinfo.name, ffinfo.author, ffinfo.fandom, ffinfo.description)
-		}
+		fmt.Printf(`from link: %s
+
+==fic info==
+name: %s
+author: %s
+fandom: %s
+
+rating: %s
+category: %s
+============
+
+==tags==
+%s
+========
+
+==stats==
+%s
+=========
+
+==description==
+%s
+===============
+`, *url, ffinfo.name, ffinfo.author, ffinfo.fandom, ffinfo.rating, ffinfo.category, ffinfo.tags, ffinfo.stats, ffinfo.description)
 		return
 	}
 

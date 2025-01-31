@@ -15,6 +15,7 @@
             "required": false,
             "help": "Download a fanfiction from the given url",
             "type": "?",
+            "default": "none",
             "options": [
                 "azw3",
                 "epub",
