@@ -9,4 +9,8 @@ __pycache__
 bin/
 obj/
 
+*.azw3
+*.epub
+*.mobi
+*.pdf
 *.html

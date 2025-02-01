@@ -2,11 +2,14 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"regexp"
 	"strings"
+
+	"github.com/pejman-hkh/gdp/gdp"
 )
 
 func writeFile(filename string, data string) error {
@@ -64,191 +67,190 @@ func cleanFFLink(url string) string {
 }
 
 type FFInfo struct {
-	titleRaw                                                         *string
-	name, author, fandom, rating, category, tags, stats, description string
-	downloads                                                        struct{ azw3, epub, mobi, pdf, html string }
+	name, author, summary string
+	ficCating             struct {
+		rating                                                               string
+		archiveWarning, categories, fandoms, relationships, characters, tags []string
+	}
+	language  string
+	stats     struct{ published, status, words, chapters, comments, kudos, bookmarks, hits string }
+	downloads struct{ azw3, epub, mobi, pdf, html string }
+}
+
+func getDownloads(ff gdp.Tag, info *FFInfo) error {
+	var (
+		dmenu, download *gdp.Tag = &gdp.Tag{}, &gdp.Tag{}
+		links                    = map[string]string{}
+		ulCount                  = 0
+	)
+	ff.Find("body").Eq(0).GetElementById("outer").GetElementById("inner").GetElementById("main").GetChildren().Each(func(_ int, t *gdp.Tag) {
+		if t.Name == "ul" {
+			if ulCount == 1 {
+				dmenu = t
+			}
+			ulCount++
+		}
+	})
+
+	dmenu.GetChildren().Each(func(_ int, t *gdp.Tag) {
+		if t.Name == "li" && t.HasClass("download") {
+			download = t
+		}
+	})
+
+	dsecondary := download.Find("ul").Eq(0)
+
+	dsecondary.GetChildren().Each(func(_ int, t *gdp.Tag) {
+		if t.Name == "li" {
+			a := t.Find("a").Eq(0)
+			links[a.Children[0].Content] = "https://archiveofourown.org" + a.Attr("href")
+		}
+	})
+
+	info.downloads.azw3 = links["AZW3"]
+	info.downloads.epub = links["EPUB"]
+	info.downloads.mobi = links["MOBI"]
+	info.downloads.pdf = links["PDF"]
+	info.downloads.html = links["HTML"]
+
+	return nil
+}
+
+func getStats(ff gdp.Tag, info *FFInfo) error {
+	var (
+		wrapper   = &gdp.Tag{}
+		stats     = map[string]string{}
+		statLists = map[string][]string{}
+	)
+
+	_, _ = stats, statLists
+
+	ff.Find("body").Eq(0).GetElementById("outer").GetElementById("inner").GetElementById("main").GetChildren().Each(func(i int, t *gdp.Tag) {
+		if t.Name == "div" && t.HasClass("wrapper") {
+			wrapper = t
+		}
+	})
+
+	wrapper.Find("dl").Eq(0).GetChildren().Each(func(_ int, t *gdp.Tag) {
+		if t.Name == "dd" {
+			if t.HasClass("tags") {
+				kind := strings.Split(t.Attr("class"), " ")[0]
+				switch kind {
+				case "rating":
+					stats[kind] = t.Find("ul").Eq(0).Find("li").Eq(0).Find("a").Eq(0).Children[0].Content
+				case "warning":
+					statLists[kind] = []string{}
+					t.Find("ul").Eq(0).GetChildren().Each(func(_ int, subt *gdp.Tag) {
+						if ftag := strings.TrimSpace(subt.Find("a").Eq(0).Html()); ftag != "" {
+							statLists[kind] = append(statLists[kind], ftag)
+						}
+					})
+				case "category":
+					statLists[kind] = []string{}
+					t.Find("ul").Eq(0).GetChildren().Each(func(_ int, subt *gdp.Tag) {
+						if ftag := strings.TrimSpace(subt.Find("a").Eq(0).Html()); ftag != "" {
+							statLists[kind] = append(statLists[kind], ftag)
+						}
+					})
+				case "fandom":
+					statLists[kind] = []string{}
+					t.Find("ul").Eq(0).GetChildren().Each(func(_ int, subt *gdp.Tag) {
+						if ftag := strings.TrimSpace(subt.Find("a").Eq(0).Html()); ftag != "" {
+							statLists[kind] = append(statLists[kind], ftag)
+						}
+					})
+				case "relationship":
+					statLists[kind] = []string{}
+					t.Find("ul").Eq(0).GetChildren().Each(func(_ int, subt *gdp.Tag) {
+						if ftag := strings.TrimSpace(subt.Find("a").Eq(0).Html()); ftag != "" {
+							statLists[kind] = append(statLists[kind], ftag)
+						}
+					})
+				case "character":
+					statLists[kind] = []string{}
+					t.Find("ul").Eq(0).GetChildren().Each(func(_ int, subt *gdp.Tag) {
+						if ftag := strings.TrimSpace(subt.Find("a").Eq(0).Html()); ftag != "" {
+							statLists[kind] = append(statLists[kind], ftag)
+						}
+					})
+				case "freeform":
+					statLists[kind] = []string{}
+					t.Find("ul").Eq(0).GetChildren().Each(func(_ int, subt *gdp.Tag) {
+						if ftag := strings.TrimSpace(subt.Find("a").Eq(0).Html()); ftag != "" {
+							statLists[kind] = append(statLists[kind], func(s string, old, new []string) string {
+								for i := range old {
+									s = strings.ReplaceAll(s, old[i], new[i])
+								}
+								return s
+							}(ftag, []string{"&#39;"}, []string{"'"}))
+						}
+					})
+				default:
+					panic(fmt.Sprintf("invalid kind '%s'", kind))
+				}
+			} else if t.HasClass("language") {
+				stats["language"] = t.Children[0].Content
+			} else if t.HasClass("stats") {
+				lastdt := ""
+				t.Find("dl").Eq(0).GetChildren().Each(func(_ int, subt *gdp.Tag) {
+					if subt.Name == "dt" {
+						lastdt = subt.Html()
+					} else if subt.Name == "dd" {
+						if subt.HasClass("bookmarks") {
+							stats[subt.Attr("class")] = lastdt + " " + subt.Find("a").Eq(0).Html()
+						} else {
+							stats[subt.Attr("class")] = lastdt + " " + subt.Html()
+						}
+					}
+				})
+			}
+		}
+	})
+
+	info.ficCating.rating = stats["rating"]
+	info.ficCating.archiveWarning = statLists["warning"]
+	info.ficCating.categories = statLists["category"]
+	info.ficCating.fandoms = statLists["fandom"]
+	info.ficCating.relationships = statLists["relationships"]
+	info.ficCating.characters = statLists["character"]
+	info.ficCating.tags = statLists["freeform"]
+
+	info.language = stats["language"]
+
+	info.stats.published = stats["published"]
+	info.stats.status = stats["status"]
+	info.stats.words = stats["words"]
+	info.stats.chapters = stats["chapters"]
+	info.stats.comments = stats["comments"]
+	info.stats.kudos = stats["kudos"]
+	info.stats.bookmarks = stats["bookmarks"]
+	info.stats.hits = stats["hits"]
+
+	return nil
 }
 
 func getFFInfo(ffhtml string) (FFInfo, error) {
 	info := FFInfo{}
-	info.titleRaw = nil
 
-	// title, auther, fandom
+	ff := gdp.Default(ffhtml)
+
 	{
-		titleReg, err := regexp.Compile(`<meta name="viewport" content="width=device-width, initial-scale=[0-9.]*"/>\n *<title>`)
-		if err != nil {
-			return FFInfo{}, err
-		}
-
-		titlem := titleReg.FindIndex([]byte(ffhtml))
-		if titlem == nil {
-			// return FFInfo{}, errors.New("could not find fanfiction title")
-			info.name, info.author, info.fandom = "[NOT FOUND]", "[NOT FOUND]", "[NOT FOUND]"
-		} else {
-			titleRaw := strings.TrimSpace(strings.Split(ffhtml[titlem[1]:], "</title>")[0])
-			titlespl := strings.Split(titleRaw, " - ")
-			if len(titlespl) > 4 {
-				info.titleRaw = &titleRaw
-			} else {
-				for i, t := range titlespl {
-					if i == 0 {
-						info.name = strings.TrimSpace(t)
-					} else if i == 1 {
-						info.author = strings.TrimSpace(t)
-					} else if i == 2 && len(titlespl) == 4 {
-						continue
-					} else {
-						if strings.HasSuffix(strings.ToLower(t), "[archive of our own]") {
-							info.fandom = strings.TrimSpace(t[:len(t)-20])
-						} else {
-							info.fandom = strings.TrimSpace(t)
-						}
-						break
-					}
-				}
-			}
-		}
+		preface := ff.Find("body").Eq(0).GetElementById("outer").GetElementById("inner").GetElementById("main").GetElementById("workskin").Find("div").Eq(0)
+		info.name = strings.TrimSpace(preface.Find("h2").Eq(0).Html())
+		info.author = strings.TrimSpace(preface.Find("h3").Eq(0).Find("a").Eq(0).Html())
+		sumpara := []string{}
+		preface.Find("div").Eq(0).Find("blockquote").Eq(0).GetChildren().Each(func(_ int, t *gdp.Tag) {
+			sumpara = append(sumpara, t.Html())
+		})
+		info.summary = strings.TrimSpace(strings.Join(sumpara, "\n\n"))
 	}
 
-	// rating
-	{
-		ratingReg, err := regexp.Compile(`<dd class="rating tags">\n *<ul class="commas">\n *<li><a class="tag" href="\/tags\/[a-zA-Z0-9%]*\/works">[a-zA-Z ]*<\/a><\/li>`)
-		if err != nil {
-			return FFInfo{}, err
-		}
-
-		ratingm := ratingReg.FindIndex([]byte(ffhtml))
-		if ratingm == nil {
-			info.rating = "[NOT FOUND]"
-		} else {
-			subratReg, err := regexp.Compile(`>[a-zA-Z ][a-zA-Z ]*<`)
-			if err != nil {
-				return FFInfo{}, err
-			}
-			srm := subratReg.FindIndex([]byte(ffhtml[ratingm[0]:ratingm[1]]))
-			if srm == nil {
-				panic("could not find rating info in `" + ffhtml[ratingm[0]:ratingm[1]] + "`")
-			}
-
-			ratingRaw := ffhtml[ratingm[0]:ratingm[1]][srm[0]+1 : srm[1]]
-
-			info.rating = ratingRaw[:len(ratingRaw)-1]
-		}
+	if err := getDownloads(ff, &info); err != nil {
+		return FFInfo{}, err
 	}
 
-	{
-		r, _ := regexp.Compile(`<dd class="freeform tags">\n *<ul class="commas">\n *<li><a class="tag" href="/tags/.*/works">.*</a></li>`)
-		r2, _ := regexp.Compile(` *<a class="tag" href="/tags/.*/works">`)
-		s := string(r.Find([]byte(ffhtml)))
-		s = s[:len(s)-9]
-		s = strings.Join(strings.Split(s, "<li>")[1:], "<li>")
-
-		tags := []string{}
-		for _, t := range strings.Split(s, "</a></li><li>") {
-			t = strings.TrimSpace(t[len(r2.FindString(t)):])
-			if t != "" {
-				tags = append(tags, strings.ReplaceAll(t, "&#39;", "'"))
-			}
-		}
-
-		info.tags = "`" + strings.Join(tags, "`, `") + "`"
-	}
-
-	// stats
-	{
-		statsReg, err := regexp.Compile(`<dl class="stats"><dt class="published">Published:<\/dt><dd class="published">[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]<\/dd><dt class="status">(Completed|Updated):<\/dt><dd class="status">[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]<\/dd><dt class="words">Words:<\/dt><dd class="words">[0-9]*,?[0-9]*<\/dd><dt class="chapters">Chapters:<\/dt><dd class="chapters">[0-9]*\/([0-9]*|\?)<\/dd><dt class="comments">Comments:<\/dt><dd class="comments">[0-9]*,?[0-9]*<\/dd><dt class="kudos">Kudos:<\/dt><dd class="kudos">[0-9]*,?[0-9]*<\/dd><dt class="bookmarks">Bookmarks:<\/dt><dd class="bookmarks"><a href="\/works\/[0-9]*\/bookmarks">[0-9]*,?[0-9]*<\/a><\/dd><dt class="hits">Hits:<\/dt><dd class="hits">[0-9]*,?[0-9]*`)
-		if err != nil {
-			return FFInfo{}, err
-		}
-		indiSReg := assert(regexp.Compile(`class="(published|status|words|chapters|comments|kudos|hits)">`))
-
-		statsm := statsReg.FindIndex([]byte(ffhtml))
-		if statsm == nil {
-			info.stats = "[NOT FOUND]"
-		} else {
-			statsRaw := []string{}
-			secs := "[ERROR]"
-
-			for _, stat := range strings.Split(strings.ReplaceAll(ffhtml[statsm[0]:statsm[1]], "</dd><dt ", "</dt><dd "), "</dt><dd ")[1:] {
-				if !strings.Contains(stat, ":") && indiSReg.Find([]byte(stat)) != nil {
-					statsRaw = append(statsRaw, stat)
-				} else if m := assert(regexp.Compile("(Completed|Updated)")).Find([]byte(stat)); m != nil {
-					secs = strings.ToLower(string(m))
-				}
-			}
-
-			_ = secs
-
-			for i := range statsRaw {
-				t := string(indiSReg.Find([]byte(statsRaw[i])))[7:]
-				t = t[:len(t)-2]
-				statsRaw[i] = t
-			}
-
-			info.stats = strings.Join(statsRaw, "\n")
-		}
-	}
-
-	// description
-	{
-		descReg, err := regexp.Compile(`<blockquote class="userstuff">\n *<p>`)
-		if err != nil {
-			return FFInfo{}, err
-		}
-
-		descm := descReg.FindIndex([]byte(ffhtml))
-		if descm == nil {
-			info.description = "[NOT FOUND]"
-		} else {
-			info.description = strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(strings.Split(ffhtml[descm[1]:], "</blockquote>")[0]), "<p>", "\n"), "</p>", "")
-		}
-	}
-
-	// downloads
-	{
-		downloadsReg, err := regexp.Compile(`<li class="download" aria-haspopup="true">\n *<a href="#">Download</a>\n *<ul class="expandable secondary">\n *<li><a href="/downloads/[0-9]*/[0-9a-zA-Z_&;%\?]*.azw3\?updated_at=[0-9]*">AZW3</a></li>\n *<li><a href="/downloads/[0-9]*/[0-9a-zA-Z_&;%\?]*.epub\?updated_at=[0-9]*">EPUB</a></li>\n *<li><a href="/downloads/[0-9]*/[0-9a-zA-Z_&;%\?]*.mobi\?updated_at=[0-9]*">MOBI</a></li>\n *<li><a href="/downloads/[0-9]*/[0-9a-zA-Z_&;%\?]*.pdf\?updated_at=[0-9]*">PDF</a></li>\n *<li><a href="/downloads/[0-9]*/[0-9a-zA-Z_&;%\?]*.html\?updated_at=[0-9]*">HTML</a></li>\n *</ul>\n *</li>`)
-		if err != nil {
-			return FFInfo{}, err
-		}
-
-		downloadsm := downloadsReg.FindIndex([]byte(ffhtml))
-		if downloadsm == nil {
-			info.downloads = struct {
-				azw3 string
-				epub string
-				mobi string
-				pdf  string
-				html string
-			}{
-				azw3: "[NOT FOUND]",
-				epub: "[NOT FOUND]",
-				mobi: "[NOT FOUND]",
-				pdf:  "[NOT FOUND]",
-				html: "[NOT FOUND]",
-			}
-		} else {
-			downspl := strings.Split(strings.TrimSpace(ffhtml[downloadsm[0]:downloadsm[1]]), "\n")
-
-			azw3 := strings.TrimSpace(downspl[3])[13:]
-			epub := strings.TrimSpace(downspl[4])[13:]
-			mobi := strings.TrimSpace(downspl[5])[13:]
-			pdf := strings.TrimSpace(downspl[6])[13:]
-			html := strings.TrimSpace(downspl[7])[13:]
-
-			info.downloads = struct {
-				azw3 string
-				epub string
-				mobi string
-				pdf  string
-				html string
-			}{
-				azw3: "https://archiveofourown.org" + azw3[:len(azw3)-15],
-				epub: "https://archiveofourown.org" + epub[:len(epub)-15],
-				mobi: "https://archiveofourown.org" + mobi[:len(mobi)-15],
-				pdf:  "https://archiveofourown.org" + pdf[:len(pdf)-14],
-				html: "https://archiveofourown.org" + html[:len(html)-15],
-			}
-		}
+	if err := getStats(ff, &info); err != nil {
+		return FFInfo{}, err
 	}
 
 	return info, nil
