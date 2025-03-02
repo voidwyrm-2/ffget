@@ -1,54 +1,34 @@
-package main
+package api
 
 import (
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/pejman-hkh/gdp/gdp"
 )
 
-func writeFile(filename string, data string) error {
-	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0o644)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	_, err = file.WriteString(data)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func assert[T any](v T, _ error) T {
-	return v
-}
-
-func getHTML(url string) (string, error) {
+func getHTML(url string) ([]byte, error) {
 	res, err := http.Get(url)
 	if err != nil {
-		return "", err
+		return []byte{}, err
 	}
 
 	content, err := io.ReadAll(res.Body)
 	res.Body.Close()
 	if err != nil {
-		return "", err
+		return []byte{}, err
 	} else if string(content) == "404: Not Found" {
-		return "", errors.New("404: Not Found")
+		return []byte{}, errors.New("404: Not Found")
 	}
 
-	return string(content), nil
+	return content, nil
 }
 
-func cleanFFLink(url string) string {
+func CleanLink(url string) string {
 	url = strings.TrimSpace(url)
 	if i := strings.Index(url, "/chapter/"); i != -1 {
 		url = url[:i]
@@ -56,7 +36,7 @@ func cleanFFLink(url string) string {
 		url = url[:i]
 	} else if i = strings.Index(url, "?"); i != -1 {
 		url = url[:i]
-	} else if r, _ := regexp.Compile(`[0-9]*`); string(r.Find([]byte(url))) == url {
+	} else if _, err := strconv.Atoi(url); err == nil {
 		url = "https://archiveofourown.org/works/" + url
 	}
 
@@ -64,17 +44,6 @@ func cleanFFLink(url string) string {
 	url += "?hide_banner=true&amp;view_adult=true&amp;=true&amp;view_full_work=true"
 
 	return url
-}
-
-type FFInfo struct {
-	name, author, summary string
-	ficCating             struct {
-		rating                                                               string
-		archiveWarning, categories, fandoms, relationships, characters, tags []string
-	}
-	language  string
-	stats     struct{ published, status, words, chapters, comments, kudos, bookmarks, hits string }
-	downloads struct{ azw3, epub, mobi, pdf, html string }
 }
 
 func getDownloads(ff gdp.Tag, info *FFInfo) error {
@@ -107,11 +76,11 @@ func getDownloads(ff gdp.Tag, info *FFInfo) error {
 		}
 	})
 
-	info.downloads.azw3 = links["AZW3"]
-	info.downloads.epub = links["EPUB"]
-	info.downloads.mobi = links["MOBI"]
-	info.downloads.pdf = links["PDF"]
-	info.downloads.html = links["HTML"]
+	info.Downloads.Azw3 = links["AZW3"]
+	info.Downloads.Epub = links["EPUB"]
+	info.Downloads.Mobi = links["MOBI"]
+	info.Downloads.Pdf = links["PDF"]
+	info.Downloads.Html = links["HTML"]
 
 	return nil
 }
@@ -207,51 +176,24 @@ func getStats(ff gdp.Tag, info *FFInfo) error {
 		}
 	})
 
-	info.ficCating.rating = stats["rating"]
-	info.ficCating.archiveWarning = statLists["warning"]
-	info.ficCating.categories = statLists["category"]
-	info.ficCating.fandoms = statLists["fandom"]
-	info.ficCating.relationships = statLists["relationships"]
-	info.ficCating.characters = statLists["character"]
-	info.ficCating.tags = statLists["freeform"]
+	info.FicCating.Rating = stats["rating"]
+	info.FicCating.ArchiveWarning = statLists["warning"]
+	info.FicCating.Categories = statLists["category"]
+	info.FicCating.Fandoms = statLists["fandom"]
+	info.FicCating.Relationships = statLists["relationships"]
+	info.FicCating.Characters = statLists["character"]
+	info.FicCating.Tags = statLists["freeform"]
 
-	info.language = stats["language"]
+	info.Language = stats["language"]
 
-	info.stats.published = stats["published"]
-	info.stats.status = stats["status"]
-	info.stats.words = stats["words"]
-	info.stats.chapters = stats["chapters"]
-	info.stats.comments = stats["comments"]
-	info.stats.kudos = stats["kudos"]
-	info.stats.bookmarks = stats["bookmarks"]
-	info.stats.hits = stats["hits"]
+	info.Stats.Published = stats["published"]
+	info.Stats.Status = stats["status"]
+	info.Stats.Words = stats["words"]
+	info.Stats.Chapters = stats["chapters"]
+	info.Stats.Comments = stats["comments"]
+	info.Stats.Kudos = stats["kudos"]
+	info.Stats.Bookmarks = stats["bookmarks"]
+	info.Stats.Hits = stats["hits"]
 
 	return nil
-}
-
-func getFFInfo(ffhtml string) (FFInfo, error) {
-	info := FFInfo{}
-
-	ff := gdp.Default(ffhtml)
-
-	{
-		preface := ff.Find("body").Eq(0).GetElementById("outer").GetElementById("inner").GetElementById("main").GetElementById("workskin").Find("div").Eq(0)
-		info.name = strings.TrimSpace(preface.Find("h2").Eq(0).Html())
-		info.author = strings.TrimSpace(preface.Find("h3").Eq(0).Find("a").Eq(0).Html())
-		sumpara := []string{}
-		preface.Find("div").Eq(0).Find("blockquote").Eq(0).GetChildren().Each(func(_ int, t *gdp.Tag) {
-			sumpara = append(sumpara, t.Html())
-		})
-		info.summary = strings.TrimSpace(strings.Join(sumpara, "\n\n"))
-	}
-
-	if err := getDownloads(ff, &info); err != nil {
-		return FFInfo{}, err
-	}
-
-	if err := getStats(ff, &info); err != nil {
-		return FFInfo{}, err
-	}
-
-	return info, nil
 }

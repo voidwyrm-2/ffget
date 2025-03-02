@@ -2,17 +2,15 @@ package main
 
 import (
 	_ "embed"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"slices"
 	"strings"
-)
 
-func exprin(msg string) {
-	fmt.Println(msg)
-	os.Exit(1)
-}
+	"github.com/voidwyrm-2/ffget/api"
+)
 
 func SelectorFlag(name, value, usage string, selectFrom []string) struct{ get func() string } {
 	ptr := flag.String(name, value, usage)
@@ -25,12 +23,13 @@ func SelectorFlag(name, value, usage string, selectFrom []string) struct{ get fu
 				}
 			})
 			if found && !slices.Contains(selectFrom, *ptr) && len(selectFrom) > 0 {
-				exprin(fmt.Sprintf("flag '-%s' only allows '%s'", name, func() string {
+				fmt.Println(fmt.Sprintf("flag '-%s' only allows '%s'", name, func() string {
 					if len(selectFrom) == 1 {
 						return selectFrom[0]
 					}
 					return strings.Join(selectFrom[:len(selectFrom)-1], "', '") + "' or '" + selectFrom[len(selectFrom)-1] + "'"
 				}()))
+				os.Exit(1)
 			}
 			return *ptr
 		},
@@ -40,33 +39,9 @@ func SelectorFlag(name, value, usage string, selectFrom []string) struct{ get fu
 //go:embed version.txt
 var version string
 
-var debug *bool
-
-func dprint(a ...any) {
-	if *debug {
-		fmt.Println(a...)
-	}
-}
-
-func main() {
+func _main() error {
 	version = strings.TrimSpace(version)
-	/*
-		parser := argparse.NewParser("ffget", "An AO3 client written in Go")
 
-		showVersion := parser.Flag("v", "version", &argparse.Options{Required: false, Default: false, Help: "Shows the current FFGet version"})
-		url := parser.String("u", "url", &argparse.Options{Required: true, Help: "The URL to the fanfiction"})
-		info := parser.Flag("i", "info", &argparse.Options{Required: false, Default: false, Help: "Gets the title, description, etc from the fanfiction"})
-		download := parser.Selector("d", "download", []string{"azw3", "epub", "mobi", "pdf", "html"}, &argparse.Options{Required: false, Default: "none", Help: "Download the specified format of the fanfiction"})
-		downloadOutput := parser.String("o", "output", &argparse.Options{Required: false, Default: "", Help: "The file to download to instead of [fic name].[download type]"})
-
-		err := parser.Parse(os.Args)
-		if err != nil {
-			fmt.Print(parser.Usage(err))
-			return
-		}
-	*/
-
-	debug = flag.Bool("debug", false, "Prints debug messages")
 	showVersion := flag.Bool("v", false, "Shows the current FFGet version")
 	url := flag.String("u", "", "The URL to the fanfiction")
 	showInfo := flag.Bool("i", false, "Gets the title, description, etc from the fanfiction")
@@ -82,127 +57,70 @@ func main() {
 
 	if *showVersion {
 		fmt.Println(version)
-		return
+		return nil
 	}
 
 	if *url == "" {
-		fmt.Println("flag '-u' is required")
-		os.Exit(1)
+		return errors.New("flag '-u' is required")
 	}
 
-	*url = cleanFFLink(*url)
-
-	html, err := getHTML(*url)
+	info, err := api.New(*url)
 	if err != nil {
-		fmt.Println(err.Error())
-		return
-	}
-
-	ffinfo, err := getFFInfo(html)
-	if err != nil {
-		fmt.Println(err.Error())
+		return err
 	}
 
 	if *showInfo {
-		formattedStats := fmt.Sprintf(`%s
-%s
-%s
-%s
-%s
-%s
-%s
-%s`, ffinfo.stats.published,
-			ffinfo.stats.status,
-			ffinfo.stats.words,
-			ffinfo.stats.chapters,
-			ffinfo.stats.comments,
-			ffinfo.stats.kudos,
-			ffinfo.stats.bookmarks,
-			ffinfo.stats.hits)
-
-		fmt.Printf(`from link: %s
-		
-==fic info==
-name: %s
-author: %s
-fandoms: '%s'
-
-rating: %s
-categories: %s
-============
-
-==tags==
-'%s'
-========
-
-==stats==
-%s
-=========
-
-==description==
-%s
-===============`+"\n", strings.Split(*url, "?")[0], ffinfo.name, ffinfo.author, strings.Join(ffinfo.ficCating.fandoms, "', '"), ffinfo.ficCating.rating, strings.Join(ffinfo.ficCating.categories, ", "), strings.Join(ffinfo.ficCating.tags, "',\t\t\n'"), formattedStats, ffinfo.summary)
-		return
+		return err
 	}
 
 	if download.get() != "none" {
-		namec := []byte{}
-		for _, c := range ffinfo.name {
+		namec := ""
+		for _, c := range info.Name {
 			if c >= 0 && c <= 255 && c != ' ' && c != '\t' && c != '\n' {
-				namec = append(namec, byte(c))
+				namec = string(c)
 			} else {
-				namec = append(namec, '_')
+				namec += "_"
 			}
 		}
 
 		if strings.TrimSpace(*downloadOutput) == "" {
-			*downloadOutput = string(namec)
+			*downloadOutput = namec
 		}
 
-		downURL := func() (l string) {
-			switch download.get() {
-			case "azw3":
-				l = ffinfo.downloads.azw3
-			case "epub":
-				l = ffinfo.downloads.epub
-			case "mobi":
-				l = ffinfo.downloads.mobi
-			case "pdf":
-				l = ffinfo.downloads.pdf
-			case "html":
-				l = ffinfo.downloads.html
-			}
-			return
-		}()
+		ficContent := []byte{}
+		switch download.get() {
+		case "azw3":
+			ficContent, err = info.DownloadAzw3()
+		case "epub":
+			ficContent, err = info.DownloadEpub()
+		case "mobi":
+			ficContent, err = info.DownloadMobi()
+		case "pdf":
+			ficContent, err = info.DownloadPdf()
+		case "html":
+			ficContent, err = info.DownloadHtml()
+		}
 
-		downloadedContent, err := getHTML(downURL)
 		if err != nil {
-			fmt.Println(err.Error())
-			return
+			return err
 		}
 
-		if err := writeFile(*downloadOutput+"."+download.get(), downloadedContent); err != nil {
-			fmt.Println(err.Error())
-			return
+		file, err := os.Create(*downloadOutput + "." + download.get())
+		defer file.Close()
+		if err != nil {
+			return err
 		}
 
-		/*
-			fmt.Println("downloading '" + downURL + "' to '" + *downloadOutput + "'...")
-			com := []string{"-c", "curl '" + downURL + "' -o " + *downloadOutput + "." + *download}
-			// fmt.Println(com)
+		_, err = file.Write(ficContent)
+		return err
+	}
 
-			var stdout bytes.Buffer
-			var stderr bytes.Buffer
-			cmd := exec.Command("sh", com...)
-			cmd.Stdout = &stdout
-			cmd.Stderr = &stderr
-			err := cmd.Run()
-			if err != nil {
-				fmt.Println(stderr.String())
-				fmt.Println(err.Error())
-			} else {
-				fmt.Println("downloading finished")
-			}
-		*/
+	return nil
+}
+
+func main() {
+	if err := _main(); err != nil {
+		fmt.Println(err.Error())
+		os.Exit(1)
 	}
 }
