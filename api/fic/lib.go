@@ -1,4 +1,4 @@
-package api
+package fic
 
 import (
 	"errors"
@@ -11,7 +11,7 @@ import (
 	"github.com/pejman-hkh/gdp/gdp"
 )
 
-func getHTML(url string) ([]byte, error) {
+func download(url string) ([]byte, error) {
 	res, err := http.Get(url)
 	if err != nil {
 		return []byte{}, err
@@ -26,24 +26,6 @@ func getHTML(url string) ([]byte, error) {
 	}
 
 	return content, nil
-}
-
-func CleanLink(url string) string {
-	url = strings.TrimSpace(url)
-	if i := strings.Index(url, "/chapter/"); i != -1 {
-		url = url[:i]
-	} else if i := strings.Index(url, "#"); i != -1 {
-		url = url[:i]
-	} else if i = strings.Index(url, "?"); i != -1 {
-		url = url[:i]
-	} else if _, err := strconv.Atoi(url); err == nil {
-		url = "https://archiveofourown.org/works/" + url
-	}
-
-	url = strings.TrimSpace(url)
-	url += "?hide_banner=true&amp;view_adult=true&amp;=true&amp;view_full_work=true"
-
-	return url
 }
 
 func getDownloads(ff gdp.Tag, info *FFInfo) error {
@@ -176,24 +158,74 @@ func getStats(ff gdp.Tag, info *FFInfo) error {
 		}
 	})
 
-	info.FicCating.Rating = stats["rating"]
-	info.FicCating.ArchiveWarning = statLists["warning"]
-	info.FicCating.Categories = statLists["category"]
-	info.FicCating.Fandoms = statLists["fandom"]
-	info.FicCating.Relationships = statLists["relationships"]
-	info.FicCating.Characters = statLists["character"]
-	info.FicCating.Tags = statLists["freeform"]
+	info.Categorization.Rating = stats["rating"]
+	info.Categorization.ArchiveWarning = statLists["warning"]
+	info.Categorization.Categories = statLists["category"]
+	info.Categorization.Fandoms = statLists["fandom"]
+	info.Categorization.Relationships = statLists["relationships"]
+	info.Categorization.Characters = statLists["character"]
+	info.Categorization.Tags = statLists["freeform"]
 
 	info.Language = stats["language"]
 
 	info.Stats.Published = stats["published"]
 	info.Stats.Status = stats["status"]
-	info.Stats.Words = stats["words"]
-	info.Stats.Chapters = stats["chapters"]
-	info.Stats.Comments = stats["comments"]
-	info.Stats.Kudos = stats["kudos"]
-	info.Stats.Bookmarks = stats["bookmarks"]
-	info.Stats.Hits = stats["hits"]
+
+	statConv := func(stat string) (int, error) {
+		s := strings.Split(stat, ":")
+
+		n, err := strconv.Atoi(strings.ReplaceAll(strings.TrimSpace(s[len(s)-1]), ",", ""))
+		if err != nil {
+			if err.Error() == "strconv.Atoi: parsing \"\": invalid syntax" {
+				return 0, nil
+			} else if err.Error() == "strconv.Atoi: parsing \"?\": invalid syntax" {
+				return -1, nil
+			}
+		}
+
+		return n, err
+	}
+
+	var err error
+
+	info.Stats.Words, err = statConv(stats["words"])
+	if err != nil {
+		return err
+	}
+
+	{
+		chapters := strings.Split(stats["chapters"], "/")
+
+		info.Stats.Chapters.Current, err = statConv(chapters[0])
+		if err != nil {
+			return err
+		}
+
+		info.Stats.Chapters.Current, err = statConv(chapters[1])
+		if err != nil {
+			return err
+		}
+	}
+
+	info.Stats.Comments, err = statConv(stats["comments"])
+	if err != nil {
+		return err
+	}
+
+	info.Stats.Kudos, err = statConv(stats["kudos"])
+	if err != nil {
+		return err
+	}
+
+	info.Stats.Bookmarks, err = statConv(stats["bookmarks"])
+	if err != nil {
+		return err
+	}
+
+	info.Stats.Hits, err = statConv(stats["hits"])
+	if err != nil {
+		return err
+	}
 
 	return nil
 }

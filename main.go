@@ -9,7 +9,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/voidwyrm-2/ffget/api"
+	"github.com/voidwyrm-2/ffget/api/fic"
+	"github.com/voidwyrm-2/ffget/api/search"
 )
 
 func SelectorFlag(name, value, usage string, selectFrom []string) struct{ get func() string } {
@@ -44,7 +45,7 @@ func _main() error {
 
 	showVersion := flag.Bool("v", false, "Shows the current FFGet version")
 	url := flag.String("u", "", "The URL to the fanfiction")
-	showInfo := flag.Bool("i", false, "Gets the title, description, etc from the fanfiction")
+	readAsSeach := flag.Bool("s", false, "Interpret the URL as a search result page instead of a fanfiction")
 	download := SelectorFlag("d", "none", "Download the specified format of the fanfiction", []string{"azw3", "epub", "mobi", "pdf", "html"})
 	downloadOutput := flag.String("o", "", "The file to download to instead of [fic name].[download type]")
 
@@ -64,55 +65,58 @@ func _main() error {
 		return errors.New("flag '-u' is required")
 	}
 
-	info, err := api.New(*url)
-	if err != nil {
-		return err
-	}
+	if *readAsSeach {
+		entries, err := search.Parse(*url)
+		if err != nil {
+			return err
+		}
 
-	if *showInfo {
-		return err
-	}
+		for _, e := range entries {
+			fmt.Println(e)
+		}
+	} else {
+		info, err := fic.New(*url)
+		if err != nil {
+			return err
+		}
 
-	if download.get() != "none" {
-		namec := ""
-		for _, c := range info.Name {
-			if c >= 0 && c <= 255 && c != ' ' && c != '\t' && c != '\n' {
-				namec = string(c)
-			} else {
-				namec += "_"
+		if download.get() == "none" {
+			fmt.Println(info)
+			return nil
+		}
+
+		if download.get() != "none" {
+			if strings.TrimSpace(*downloadOutput) == "" {
+				*downloadOutput = info.NameForFS()
 			}
-		}
 
-		if strings.TrimSpace(*downloadOutput) == "" {
-			*downloadOutput = namec
-		}
+			ficContent := []byte{}
+			switch download.get() {
+			case "azw3":
+				ficContent, err = info.DownloadAzw3()
+			case "epub":
+				ficContent, err = info.DownloadEpub()
+			case "mobi":
+				ficContent, err = info.DownloadMobi()
+			case "pdf":
+				ficContent, err = info.DownloadPdf()
+			case "html":
+				ficContent, err = info.DownloadHtml()
+			}
 
-		ficContent := []byte{}
-		switch download.get() {
-		case "azw3":
-			ficContent, err = info.DownloadAzw3()
-		case "epub":
-			ficContent, err = info.DownloadEpub()
-		case "mobi":
-			ficContent, err = info.DownloadMobi()
-		case "pdf":
-			ficContent, err = info.DownloadPdf()
-		case "html":
-			ficContent, err = info.DownloadHtml()
-		}
+			if err != nil {
+				return err
+			}
 
-		if err != nil {
+			file, err := os.Create(*downloadOutput + "." + download.get())
+			defer file.Close()
+			if err != nil {
+				return err
+			}
+
+			_, err = file.Write(ficContent)
 			return err
 		}
-
-		file, err := os.Create(*downloadOutput + "." + download.get())
-		defer file.Close()
-		if err != nil {
-			return err
-		}
-
-		_, err = file.Write(ficContent)
-		return err
 	}
 
 	return nil
